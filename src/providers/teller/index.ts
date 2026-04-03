@@ -12,18 +12,12 @@ import type {
 
 const API_BASE = "https://api.teller.io";
 
-/** Minimum delay between Teller API requests (ms) to avoid rate limits. */
-const REQUEST_INTERVAL_MS = 500;
-
 /** Maximum retries on HTTP 429 responses. */
 const MAX_RETRIES = 3;
 
 /** Per-token cache of account lists (avoids redundant /accounts calls). */
 const accountsCache = new Map<string, { data: TellerAccount[]; ts: number }>();
 const CACHE_TTL_MS = 60_000; // 1 minute
-
-/** Timestamp of last Teller API request (global across all providers). */
-let lastRequestTs = 0;
 
 interface TellerConfig {
   certificatePath?: string;
@@ -68,26 +62,13 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Throttle requests so we never fire faster than REQUEST_INTERVAL_MS.
- */
-async function throttle(): Promise<void> {
-  const now = Date.now();
-  const elapsed = now - lastRequestTs;
-  if (elapsed < REQUEST_INTERVAL_MS) {
-    await sleep(REQUEST_INTERVAL_MS - elapsed);
-  }
-  lastRequestTs = Date.now();
-}
-
-/**
  * Make an HTTPS request with mTLS client certificate.
  *
  * Uses node:https directly because Node's global fetch doesn't
  * reliably support passing an https.Agent for mTLS across all
  * Node versions. This is the battle-tested approach.
  *
- * Includes automatic throttling and retry with exponential backoff
- * on HTTP 429 (rate limit) responses.
+ * Retries with exponential backoff on HTTP 429 (rate limit) responses.
  */
 async function tellerFetch(
   url: string,
@@ -97,8 +78,6 @@ async function tellerFetch(
   const auth = Buffer.from(`${config.accessToken}:`).toString("base64");
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    await throttle();
-
     const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
       const opts: Parameters<typeof httpsRequest>[1] = {
         method: "GET",

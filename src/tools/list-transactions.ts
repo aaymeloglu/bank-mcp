@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { loadConfig, getConnection, getAllConnections } from "../config.js";
+import { loadConfig, getConnection, getConnectionForAccount, getAllConnections } from "../config.js";
 import { getProvider } from "../providers/registry.js";
 import { cache, TTL } from "../utils/cache.js";
 import type { Transaction, TransactionFilter } from "../types.js";
@@ -8,7 +8,7 @@ export const listTransactionsSchema = z.object({
   connectionId: z
     .string()
     .optional()
-    .describe("Connection ID. If omitted, queries all connections."),
+    .describe("Connection ID. If omitted, queries all connections (or resolved from accountId)."),
   accountId: z
     .string()
     .optional()
@@ -55,17 +55,18 @@ export async function listTransactions(
     limit: args.limit,
   };
 
-  // Resolve which connections and accounts to query
-  const connections = args.connectionId
-    ? [getConnection(config, args.connectionId)]
-    : getAllConnections(config);
+  // If accountId is given without connectionId, resolve it from config
+  const connections = args.accountId && !args.connectionId
+    ? [getConnectionForAccount(config, args.accountId)]
+    : args.connectionId
+      ? [getConnection(config, args.connectionId)]
+      : getAllConnections(config);
 
   const allTx: Transaction[] = [];
 
   for (const conn of connections) {
     const provider = getProvider(conn.provider);
 
-    // Get account list (may come from cache)
     let accountIds: string[];
     if (args.accountId) {
       accountIds = [args.accountId];

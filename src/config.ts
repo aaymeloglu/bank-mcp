@@ -77,6 +77,28 @@ export function getAllConnections(config: AppConfig): ConnectionConfig[] {
 }
 
 /**
+ * Find the connection that owns a given account ID by scanning the
+ * accounts stored in each connection's config.
+ */
+export function getConnectionForAccount(
+  config: AppConfig,
+  accountId: string,
+): ConnectionConfig {
+  for (const conn of config.connections) {
+    const accounts = conn.config.accounts as
+      | Array<{ uid: string }>
+      | undefined;
+    if (accounts?.some((a) => a.uid === accountId)) {
+      return conn;
+    }
+  }
+  throw new Error(
+    `No connection found for account "${accountId}". ` +
+    `Run list_accounts to see available accounts and their connection IDs.`,
+  );
+}
+
+/**
  * Expand ~ in paths within a config object.
  */
 export function expandPaths(config: Record<string, unknown>): Record<string, unknown> {

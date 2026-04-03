@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { loadConfig, getConnection, getAllConnections } from "../config.js";
+import { loadConfig, getConnection, getConnectionForAccount, getAllConnections } from "../config.js";
 import { getProvider } from "../providers/registry.js";
 import { cache, TTL } from "../utils/cache.js";
 import type { Balance } from "../types.js";
@@ -14,9 +14,12 @@ export async function getBalance(
 ): Promise<Balance[]> {
   const config = loadConfig();
 
-  const connections = args.connectionId
-    ? [getConnection(config, args.connectionId)]
-    : getAllConnections(config);
+  // If accountId is given without connectionId, resolve it from config
+  const connections = args.accountId && !args.connectionId
+    ? [getConnectionForAccount(config, args.accountId)]
+    : args.connectionId
+      ? [getConnection(config, args.connectionId)]
+      : getAllConnections(config);
 
   const allBalances: Balance[] = [];
 
