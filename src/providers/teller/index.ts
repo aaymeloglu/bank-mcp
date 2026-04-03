@@ -12,6 +12,19 @@ import type {
 
 const API_BASE = "https://api.teller.io";
 
+/** Minimum delay between Teller API requests (ms) to avoid rate limits. */
+const REQUEST_INTERVAL_MS = 500;
+
+/** Maximum retries on HTTP 429 responses. */
+const MAX_RETRIES = 3;
+
+/** Per-token cache of account lists (avoids redundant /accounts calls). */
+const accountsCache = new Map<string, { data: TellerAccount[]; ts: number }>();
+const CACHE_TTL_MS = 60_000; // 1 minute
+
+/** Timestamp of last Teller API request (global across all providers). */
+let lastRequestTs = 0;
+
 interface TellerConfig {
   certificatePath?: string;
   privateKeyPath?: string;
@@ -50,12 +63,31 @@ function createAgent(config: TellerConfig): Agent | undefined {
   });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Throttle requests so we never fire faster than REQUEST_INTERVAL_MS.
+ */
+async function throttle(): Promise<void> {
+  const now = Date.now();
+  const elapsed = now - lastRequestTs;
+  if (elapsed < REQUEST_INTERVAL_MS) {
+    await sleep(REQUEST_INTERVAL_MS - elapsed);
+  }
+  lastRequestTs = Date.now();
+}
+
 /**
  * Make an HTTPS request with mTLS client certificate.
  *
  * Uses node:https directly because Node's global fetch doesn't
  * reliably support passing an https.Agent for mTLS across all
  * Node versions. This is the battle-tested approach.
+ *
+ * Includes automatic throttling and retry with exponential backoff
+ * on HTTP 429 (rate limit) responses.
  */
 async function tellerFetch(
   url: string,
@@ -64,47 +96,79 @@ async function tellerFetch(
 ): Promise<unknown> {
   const auth = Buffer.from(`${config.accessToken}:`).toString("base64");
 
-  const opts: Parameters<typeof httpsRequest>[1] = {
-    method: "GET",
-    headers: {
-      Authorization: `Basic ${auth}`,
-      Accept: "application/json",
-    },
-  };
-  if (agent) opts.agent = agent;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    await throttle();
 
-  return new Promise((resolve, reject) => {
-    const req = httpsRequest(
-      url,
-      opts,
-      (res) => {
+    const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const opts: Parameters<typeof httpsRequest>[1] = {
+        method: "GET",
+        headers: {
+          Authorization: `Basic ${auth}`,
+          Accept: "application/json",
+        },
+      };
+      if (agent) opts.agent = agent;
+
+      const req = httpsRequest(url, opts, (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (chunk: Buffer) => chunks.push(chunk));
         res.on("end", () => {
-          const body = Buffer.concat(chunks).toString("utf-8");
-          if (res.statusCode && res.statusCode >= 400) {
-            reject(
-              new Error(
-                `Teller API ${res.statusCode} ${res.statusMessage}: ${body.slice(0, 200)}`,
-              ),
-            );
-            return;
-          }
-          try {
-            resolve(JSON.parse(body));
-          } catch {
-            reject(new Error(`Teller API: invalid JSON response: ${body.slice(0, 200)}`));
-          }
+          resolve({
+            status: res.statusCode || 0,
+            body: Buffer.concat(chunks).toString("utf-8"),
+          });
         });
-      },
-    );
+      });
 
-    req.on("error", reject);
-    req.setTimeout(30000, () => {
-      req.destroy(new Error("Teller API request timed out (30s)"));
+      req.on("error", reject);
+      req.setTimeout(30000, () => {
+        req.destroy(new Error("Teller API request timed out (30s)"));
+      });
+      req.end();
     });
-    req.end();
-  });
+
+    if (result.status === 429 && attempt < MAX_RETRIES) {
+      const backoff = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
+      await sleep(backoff);
+      continue;
+    }
+
+    if (result.status >= 400) {
+      throw new Error(
+        `Teller API ${result.status}: ${result.body.slice(0, 200)}`,
+      );
+    }
+
+    try {
+      return JSON.parse(result.body);
+    } catch {
+      throw new Error(`Teller API: invalid JSON response: ${result.body.slice(0, 200)}`);
+    }
+  }
+
+  throw new Error("Teller API: max retries exceeded (rate limited)");
+}
+
+/**
+ * Fetch accounts with caching to avoid redundant API calls.
+ * Every getBalance() and listTransactions() call needs the account list
+ * just to resolve the currency — this prevents burning an API request each time.
+ */
+async function fetchAccountsCached(
+  tc: TellerConfig,
+  agent: Agent | undefined,
+): Promise<TellerAccount[]> {
+  const cached = accountsCache.get(tc.accessToken);
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    return cached.data;
+  }
+  const accounts = (await tellerFetch(
+    `${API_BASE}/accounts`,
+    tc,
+    agent,
+  )) as TellerAccount[];
+  accountsCache.set(tc.accessToken, { data: accounts, ts: Date.now() });
+  return accounts;
 }
 
 export class TellerProvider extends BankProvider {
@@ -143,11 +207,7 @@ export class TellerProvider extends BankProvider {
     const tc = parseConfig(config);
     const agent = createAgent(tc);
 
-    const accounts = (await tellerFetch(
-      `${API_BASE}/accounts`,
-      tc,
-      agent,
-    )) as TellerAccount[];
+    const accounts = await fetchAccountsCached(tc, agent);
 
     return accounts
       .filter((a) => a.status === "open")
@@ -168,12 +228,7 @@ export class TellerProvider extends BankProvider {
     const tc = parseConfig(config);
     const agent = createAgent(tc);
 
-    // Fetch account to get currency (Teller transactions don't include it)
-    const accounts = (await tellerFetch(
-      `${API_BASE}/accounts`,
-      tc,
-      agent,
-    )) as TellerAccount[];
+    const accounts = await fetchAccountsCached(tc, agent);
     const account = accounts.find((a) => a.id === accountId);
     const currency = account?.currency || "USD";
 
@@ -238,12 +293,7 @@ export class TellerProvider extends BankProvider {
     const tc = parseConfig(config);
     const agent = createAgent(tc);
 
-    // Fetch account to get currency (balance endpoint doesn't include it)
-    const accounts = (await tellerFetch(
-      `${API_BASE}/accounts`,
-      tc,
-      agent,
-    )) as TellerAccount[];
+    const accounts = await fetchAccountsCached(tc, agent);
     const account = accounts.find((a) => a.id === accountId);
     const currency = account?.currency || "USD";
 
