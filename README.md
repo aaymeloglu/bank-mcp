@@ -562,12 +562,42 @@ ls -la ~/.bank-mcp/keys/teller/
 
 ## Development
 
+### Running from source (local install)
+
+If you want to run from a local clone instead of npx (e.g. to use a fork with custom changes):
+
 ```bash
 git clone https://github.com/elcukro/bank-mcp.git
 cd bank-mcp
 npm install
+npm run build
+```
+
+Then point your MCP client at the built output:
+
+```json
+{
+  "mcpServers": {
+    "bank": {
+      "command": "node",
+      "args": ["/path/to/bank-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+To add a new bank connection from a local install:
+
+```bash
+node /path/to/bank-mcp/dist/index.js init
+```
+
+After making changes, rebuild with `npm run build`. No reinstall needed -- the MCP config points directly at the built files.
+
+### Other commands
+
+```bash
 npm test          # Run tests (vitest)
-npm run build     # Compile TypeScript
 npm run dev       # Watch mode (recompile on change)
 npm run lint      # ESLint
 ```
