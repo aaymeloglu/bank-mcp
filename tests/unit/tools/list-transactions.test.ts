@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock config to use mock provider
 vi.mock("../../../src/config.js", () => ({
@@ -21,6 +21,19 @@ vi.mock("../../../src/config.js", () => ({
 import { listTransactions } from "../../../src/tools/list-transactions.js";
 
 describe("listTransactions", () => {
+  // The mock provider generates transactions for the last 90 days relative to
+  // "now". Freeze the clock to a date inside the fixed window used below so the
+  // window always overlaps the generated data (avoids a time-bomb failure once
+  // real time drifts past the hardcoded range). Fake only Date so async timers
+  // keep working.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-02-21T12:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("returns transactions sorted by date descending", async () => {
     const txs = await listTransactions({
       dateFrom: "2026-01-01",
