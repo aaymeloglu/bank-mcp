@@ -44,14 +44,16 @@ Most people manage their finances by logging into bank portals, downloading CSVs
 | Provider | Region | Institutions | Auth Method | Setup Difficulty |
 |----------|--------|-------------|-------------|-----------------|
 | **[Enable Banking](https://enablebanking.com)** | Europe | 2,000+ | RSA key + session | Medium |
-| **[Teller](https://teller.io)** | US | 7,000+ | mTLS certificate | Medium |
+| ~~**[Teller](https://teller.io)**~~ ⚠️ | US | 7,000+ | mTLS certificate | **Discontinued** |
 | **[Plaid](https://plaid.com)** | US / CA / EU | 12,000+ | Client ID + secret | Easy |
 | **[Tink](https://tink.com)** | Europe | 3,400+ | OAuth2 token | Easy |
 | **Mock** | Demo | — | None | Instant |
 
+> **⚠️ Teller has shut down.** In July 2026, Teller emailed its customers that it was withdrawing its API product - citing an inability to attract enough large customers to make it viable - and discontinued the service that same week. Existing Teller connections have stopped working. Use **Plaid** for US banks instead. Because `bank-mcp` is provider-agnostic, migrating is a config-only change with no code edits: re-link each bank under the Plaid provider and update `~/.bank-mcp/config.json`. The Teller provider and its docs below are retained for historical reference only.
+
 ### US Banks
 
-Supported through Plaid and Teller — covering the top 20 US institutions and thousands more:
+Supported through Plaid - covering the top 20 US institutions and thousands more:
 
 JPMorgan Chase · Bank of America · Wells Fargo · Citibank · Capital One · U.S. Bank · PNC · Truist · Goldman Sachs · TD Bank · Citizens · Fifth Third · M&T Bank · Huntington · KeyBank · Ally · Regions · BMO · American Express · USAA
 
@@ -379,6 +381,8 @@ npx @bank-mcp/server init
 > **Tip:** The wizard handles the entire OAuth flow — redirect URI setup, bank selection, and session creation. Sessions expire after 90 days (PSD2 regulation); re-run `init` to refresh.
 
 ### Teller (US Banks)
+
+> **⚠️ Discontinued (July 2026).** Teller withdrew its API product and the service is no longer operational, so this provider can no longer be set up. The instructions below are kept for historical reference. For US banks, use [Plaid](#plaid-uscaeu) instead.
 
 **What you need:**
 - [ ] A [Teller](https://teller.io) developer account
