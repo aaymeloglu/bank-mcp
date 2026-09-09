@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `list_transactions`, `search_transactions` and `spending_summary` crashed with `Cannot read properties of undefined (reading 'transactionDays')` when `~/.bank-mcp/config.json` had no `defaults` block (any config written by hand or migrated between providers). `loadConfig` now fills missing defaults.
+
+### Changed
+- `get_balance` makes one Plaid `/accounts/balance/get` request per connection (new optional `getBalances` on providers) instead of one per account, and fetches connections in parallel. A five-connection setup went from ~108s to a few seconds and no longer trips Plaid's per-item `BALANCE_LIMIT`. Providers without batched balances fall back to concurrent per-account fetches.
+- Tools are registered through the SDK's `registerTool` with titles, read-only annotations and output schemas; results now include `structuredContent` (arrays wrapped as `accounts` / `transactions` / `balances`). The text content is unchanged.
+- Server reports the package version instead of a hardcoded `0.1.3`, and advertises `instructions`.
+
 ## [0.1.3] — 2026-02-22
 
 ### Fixed

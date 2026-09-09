@@ -176,11 +176,23 @@ export class PlaidProvider extends BankProvider {
     config: Record<string, unknown>,
     accountId: string,
   ): Promise<Balance[]> {
+    return this.getBalances(config, [accountId]);
+  }
+
+  /**
+   * One /accounts/balance/get per connection. Plaid rate-limits this endpoint per
+   * item (BALANCE_LIMIT), so batching matters as much as speed.
+   */
+  async getBalances(
+    config: Record<string, unknown>,
+    accountIds?: string[],
+  ): Promise<Balance[]> {
     const pc = parseConfig(config);
 
-    const data = (await plaidPost(pc, "/accounts/balance/get", {
-      options: { account_ids: [accountId] },
-    })) as PlaidAccountsResponse;
+    const body: Record<string, unknown> = accountIds?.length
+      ? { options: { account_ids: accountIds } }
+      : {};
+    const data = (await plaidPost(pc, "/accounts/balance/get", body)) as PlaidAccountsResponse;
 
     const balances: Balance[] = [];
     for (const acc of data.accounts) {
@@ -206,6 +218,7 @@ export class PlaidProvider extends BankProvider {
 
     return balances;
   }
+
 }
 
 // --- Raw Plaid API types ---

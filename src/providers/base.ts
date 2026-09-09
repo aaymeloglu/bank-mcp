@@ -37,6 +37,18 @@ export abstract class BankProvider {
     accountId: string,
   ): Promise<Balance[]>;
 
+  /**
+   * Optional: fetch balances for many accounts in one request. Providers whose
+   * API returns every account of a connection at once (Plaid) implement this so
+   * callers make one request per connection instead of one per account, which
+   * both speeds things up and stays under per-item rate limits.
+   * `accountIds` omitted = all accounts on the connection.
+   */
+  getBalances?(
+    config: Record<string, unknown>,
+    accountIds?: string[],
+  ): Promise<Balance[]>;
+
   /** Describe config fields for the init wizard. */
   abstract getConfigSchema(): ConfigField[];
 }
