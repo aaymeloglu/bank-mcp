@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { listTransactions } from "./list-transactions.js";
+import type { Transaction } from "../types.js";
 
 export const searchTransactionsSchema = z.object({
   query: z
@@ -13,7 +14,7 @@ export const searchTransactionsSchema = z.object({
 
 export async function searchTransactions(
   args: z.infer<typeof searchTransactionsSchema>,
-): Promise<unknown> {
+): Promise<Transaction[]> {
   // Fetch all transactions for the date range, then filter locally
   const transactions = await listTransactions({
     connectionId: args.connectionId,

@@ -247,6 +247,30 @@ describe("PlaidProvider", () => {
     });
   });
 
+  describe("getBalances", () => {
+    it("fetches every account of the item in a single request when no ids are given", async () => {
+      mockedFetch.mockResolvedValueOnce(accountsFixture);
+
+      const balances = await provider.getBalances(TEST_CONFIG);
+
+      expect(mockedFetch).toHaveBeenCalledTimes(1);
+      const [url, init] = mockedFetch.mock.calls[0];
+      expect(String(url)).toContain("/accounts/balance/get");
+      const body = JSON.parse(String((init as { body?: unknown })?.body ?? "{}"));
+      expect(body.options?.account_ids).toBeUndefined();
+      const ids = new Set(balances.map((b) => b.accountId));
+      expect(ids.size).toBe(accountsFixture.accounts.length);
+    });
+
+    it("filters to the requested account ids", async () => {
+      mockedFetch.mockResolvedValueOnce(accountsFixture);
+      await provider.getBalances(TEST_CONFIG, ["plaid_acc_checking"]);
+      const [, init] = mockedFetch.mock.calls[0];
+      const body = JSON.parse(String((init as { body?: unknown })?.body ?? "{}"));
+      expect(body.options.account_ids).toEqual(["plaid_acc_checking"]);
+    });
+  });
+
   describe("getConfigSchema", () => {
     it("returns all required fields including environment", () => {
       const schema = provider.getConfigSchema();
