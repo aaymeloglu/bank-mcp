@@ -21,32 +21,45 @@ export async function getBalance(
       ? [getConnection(config, args.connectionId)]
       : getAllConnections(config);
 
-  const allBalances: Balance[] = [];
+  // Balance fetches are the slow path (Plaid polls the bank live), so: one batched
+  // request per connection where the provider supports it (also keeps us under
+  // Plaid's per-item BALANCE_LIMIT), otherwise per-account requests run
+  // concurrently. Connections are fetched in parallel; result order is preserved.
+  const perConnection = await Promise.all(
+    connections.map(async (conn) => {
+      const provider = getProvider(conn.provider);
 
-  for (const conn of connections) {
-    const provider = getProvider(conn.provider);
+      if (provider.getBalances) {
+        const cacheKey = `bal:${conn.id}:${args.accountId ?? "*"}`;
+        const cached = cache.get<Balance[]>(cacheKey);
+        if (cached) return cached;
 
-    let accountIds: string[];
-    if (args.accountId) {
-      accountIds = [args.accountId];
-    } else {
-      const accounts = await provider.listAccounts(conn.config);
-      accountIds = accounts.map((a) => a.uid);
-    }
-
-    for (const accId of accountIds) {
-      const cacheKey = `bal:${conn.id}:${accId}`;
-      const cached = cache.get<Balance[]>(cacheKey);
-      if (cached) {
-        allBalances.push(...cached);
-        continue;
+        const balances = await provider.getBalances(
+          conn.config,
+          args.accountId ? [args.accountId] : undefined,
+        );
+        cache.set(cacheKey, balances, TTL.BALANCES);
+        return balances;
       }
 
-      const balances = await provider.getBalance(conn.config, accId);
-      cache.set(cacheKey, balances, TTL.BALANCES);
-      allBalances.push(...balances);
-    }
-  }
+      const accountIds = args.accountId
+        ? [args.accountId]
+        : (await provider.listAccounts(conn.config)).map((a) => a.uid);
 
-  return allBalances;
+      const perAccount = await Promise.all(
+        accountIds.map(async (accId) => {
+          const cacheKey = `bal:${conn.id}:${accId}`;
+          const cached = cache.get<Balance[]>(cacheKey);
+          if (cached) return cached;
+
+          const balances = await provider.getBalance(conn.config, accId);
+          cache.set(cacheKey, balances, TTL.BALANCES);
+          return balances;
+        }),
+      );
+      return perAccount.flat();
+    }),
+  );
+
+  return perConnection.flat();
 }

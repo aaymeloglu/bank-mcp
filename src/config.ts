@@ -35,10 +35,24 @@ export function loadConfig(): AppConfig {
 
   try {
     const raw = readFileSync(CONFIG_PATH, "utf-8");
-    return JSON.parse(raw) as AppConfig;
+    return normalizeConfig(JSON.parse(raw));
   } catch {
     return { ...DEFAULT_CONFIG, connections: [] };
   }
+}
+
+/**
+ * Fill in anything a hand-edited or older config file leaves out. Configs
+ * written before `defaults` existed (or migrated by hand, e.g. Teller -> Plaid)
+ * otherwise crash every transaction tool on `config.defaults.transactionDays`.
+ */
+export function normalizeConfig(parsed: Partial<AppConfig> | null | undefined): AppConfig {
+  const input = parsed ?? {};
+  return {
+    version: input.version ?? DEFAULT_CONFIG.version,
+    connections: Array.isArray(input.connections) ? input.connections : [],
+    defaults: { ...DEFAULT_CONFIG.defaults, ...(input.defaults ?? {}) },
+  };
 }
 
 export function saveConfig(config: AppConfig): void {
