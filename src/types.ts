@@ -31,6 +31,53 @@ export interface Balance {
   type: string; // "closingBooked" | "expected" | etc.
 }
 
+/** Bond terms. Parsed from the security name when the API has no structured field. */
+export interface FixedIncomeTerms {
+  couponRate?: number; // percent, e.g. 5 for 5.000%
+  maturityDate?: string; // "YYYY-MM-DD"
+  callDate?: string; // "YYYY-MM-DD", next call
+  callPrice?: number; // per 100 face
+}
+
+export interface Holding {
+  accountId: string;
+  securityId: string;
+  name: string;
+  type?: string; // "equity" | "fixed income" | "mutual fund" | "cash" | ...
+  ticker?: string;
+  cusip?: string;
+  isCashEquivalent: boolean;
+  quantity: number; // shares, or face value for bonds
+  price?: number; // bonds: per 100 face
+  priceAsOf?: string;
+  value: number;
+  costBasis?: number;
+  currency: string;
+  fixedIncome?: FixedIncomeTerms;
+}
+
+export interface InvestmentTransaction {
+  id: string;
+  accountId: string;
+  date: string; // "YYYY-MM-DD"
+  name: string;
+  type: string; // "buy" | "sell" | "cash" | "fee" | "transfer" | ...
+  subtype?: string;
+  quantity: number;
+  price: number;
+  amount: number; // Signed: negative = cash leaving the account
+  fees?: number;
+  currency: string;
+  securityId?: string;
+  securityName?: string;
+  ticker?: string;
+}
+
+export interface InvestmentTransactionFilter {
+  dateFrom?: string;
+  dateTo?: string;
+}
+
 export interface TransactionFilter {
   dateFrom?: string;
   dateTo?: string;

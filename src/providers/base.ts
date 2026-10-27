@@ -4,6 +4,9 @@ import type {
   Balance,
   TransactionFilter,
   ConfigField,
+  Holding,
+  InvestmentTransaction,
+  InvestmentTransactionFilter,
 } from "../types.js";
 
 /**
@@ -48,6 +51,23 @@ export abstract class BankProvider {
     config: Record<string, unknown>,
     accountIds?: string[],
   ): Promise<Balance[]>;
+
+  /**
+   * Optional: current investment positions (brokerage accounts). Providers
+   * without an investments API leave this undefined.
+   * `accountIds` omitted = all accounts on the connection.
+   */
+  getHoldings?(
+    config: Record<string, unknown>,
+    accountIds?: string[],
+  ): Promise<Holding[]>;
+
+  /** Optional: buys, sells, income and fees in brokerage accounts. */
+  listInvestmentTransactions?(
+    config: Record<string, unknown>,
+    accountIds: string[] | undefined,
+    filter?: InvestmentTransactionFilter,
+  ): Promise<InvestmentTransaction[]>;
 
   /** Describe config fields for the init wizard. */
   abstract getConfigSchema(): ConfigField[];

@@ -6,6 +6,10 @@ import type {
   Balance,
   TransactionFilter,
   ConfigField,
+  Holding,
+  InvestmentTransaction,
+  InvestmentTransactionFilter,
+  FixedIncomeTerms,
 } from "../../types.js";
 
 const ENVIRONMENTS: Record<string, string> = {
@@ -219,6 +223,69 @@ export class PlaidProvider extends BankProvider {
     return balances;
   }
 
+  /**
+   * /investments/holdings/get returns every position on the item in one call;
+   * filter to `accountIds` server-side when given.
+   */
+  async getHoldings(
+    config: Record<string, unknown>,
+    accountIds?: string[],
+  ): Promise<Holding[]> {
+    const pc = parseConfig(config);
+
+    const body: Record<string, unknown> = accountIds?.length
+      ? { options: { account_ids: accountIds } }
+      : {};
+    const data = (await plaidPost(pc, "/investments/holdings/get", body)) as PlaidHoldingsResponse;
+
+    const securities = new Map(data.securities.map((s) => [s.security_id, s]));
+    return data.holdings.map((h) => normalizeHolding(h, securities.get(h.security_id)));
+  }
+
+  async listInvestmentTransactions(
+    config: Record<string, unknown>,
+    accountIds: string[] | undefined,
+    filter?: InvestmentTransactionFilter,
+  ): Promise<InvestmentTransaction[]> {
+    const pc = parseConfig(config);
+
+    const startDate = filter?.dateFrom || defaultDateFrom(90);
+    const endDate = filter?.dateTo || today();
+
+    const all: InvestmentTransaction[] = [];
+    const securities = new Map<string, PlaidSecurity>();
+    let offset = 0;
+    const pageSize = 500;
+
+    do {
+      const data = (await plaidPost(pc, "/investments/transactions/get", {
+        start_date: startDate,
+        end_date: endDate,
+        options: {
+          ...(accountIds?.length ? { account_ids: accountIds } : {}),
+          count: pageSize,
+          offset,
+        },
+      })) as PlaidInvestmentTransactionsResponse;
+
+      for (const sec of data.securities) securities.set(sec.security_id, sec);
+      for (const raw of data.investment_transactions) {
+        all.push(
+          normalizeInvestmentTransaction(
+            raw,
+            raw.security_id ? securities.get(raw.security_id) : undefined,
+          ),
+        );
+      }
+
+      offset += data.investment_transactions.length;
+      if (data.investment_transactions.length === 0) break;
+      if (offset >= data.total_investment_transactions) break;
+    } while (true);
+
+    return all;
+  }
+
 }
 
 // --- Raw Plaid API types ---
@@ -278,6 +345,66 @@ interface PlaidTransaction {
   website: string | null;
 }
 
+interface PlaidSecurity {
+  security_id: string;
+  name: string | null;
+  ticker_symbol: string | null;
+  cusip: string | null;
+  type: string | null;
+  is_cash_equivalent: boolean | null;
+  close_price: number | null;
+  iso_currency_code: string | null;
+  fixed_income: {
+    yield_rate: { percentage: number; type: string | null } | null;
+    maturity_date: string | null;
+    issue_date: string | null;
+    face_value: number | null;
+  } | null;
+}
+
+interface PlaidHolding {
+  account_id: string;
+  security_id: string;
+  quantity: number;
+  institution_price: number;
+  institution_price_as_of: string | null;
+  institution_value: number;
+  cost_basis: number | null;
+  iso_currency_code: string | null;
+}
+
+interface PlaidHoldingsResponse {
+  accounts: PlaidAccount[];
+  holdings: PlaidHolding[];
+  securities: PlaidSecurity[];
+  item: Record<string, unknown>;
+  request_id: string;
+}
+
+interface PlaidInvestmentTransaction {
+  investment_transaction_id: string;
+  account_id: string;
+  security_id: string | null;
+  date: string;
+  name: string;
+  quantity: number;
+  amount: number;
+  price: number;
+  fees: number | null;
+  type: string;
+  subtype: string | null;
+  iso_currency_code: string | null;
+}
+
+interface PlaidInvestmentTransactionsResponse {
+  accounts: PlaidAccount[];
+  investment_transactions: PlaidInvestmentTransaction[];
+  securities: PlaidSecurity[];
+  total_investment_transactions: number;
+  item: Record<string, unknown>;
+  request_id: string;
+}
+
 /**
  * Normalize a Plaid transaction.
  *
@@ -324,6 +451,105 @@ function normalizeTransaction(raw: PlaidTransaction): Transaction {
     reference: raw.original_description || raw.name,
     rawData: raw as unknown as Record<string, unknown>,
   };
+}
+
+function normalizeHolding(h: PlaidHolding, sec: PlaidSecurity | undefined): Holding {
+  const fixedIncome = sec ? fixedIncomeTerms(sec) : undefined;
+  return {
+    accountId: h.account_id,
+    securityId: h.security_id,
+    name: sec?.name || h.security_id,
+    type: sec?.type || undefined,
+    ticker: sec?.ticker_symbol || undefined,
+    cusip: sec?.cusip || undefined,
+    isCashEquivalent: sec?.is_cash_equivalent ?? false,
+    quantity: h.quantity,
+    price: h.institution_price,
+    priceAsOf: h.institution_price_as_of || undefined,
+    value: h.institution_value,
+    costBasis: h.cost_basis ?? undefined,
+    currency: h.iso_currency_code || sec?.iso_currency_code || "USD",
+    ...(fixedIncome ? { fixedIncome } : {}),
+  };
+}
+
+/**
+ * Plaid's investment amount sign matches its transactions endpoint: positive =
+ * cash leaving the account (a buy or fee). Flip it so negative = cash out, same
+ * as Transaction.amount.
+ */
+function normalizeInvestmentTransaction(
+  raw: PlaidInvestmentTransaction,
+  sec: PlaidSecurity | undefined,
+): InvestmentTransaction {
+  return {
+    id: raw.investment_transaction_id,
+    accountId: raw.account_id,
+    date: raw.date,
+    name: raw.name,
+    type: raw.type,
+    subtype: raw.subtype || undefined,
+    quantity: raw.quantity,
+    price: raw.price,
+    amount: -raw.amount,
+    fees: raw.fees ?? undefined,
+    currency: raw.iso_currency_code || "USD",
+    securityId: raw.security_id || undefined,
+    securityName: sec?.name || undefined,
+    ticker: sec?.ticker_symbol || undefined,
+  };
+}
+
+/**
+ * Bond terms. Plaid's structured fixed_income field is rarely populated for
+ * munis, so fall back to the description, which brokers write in several
+ * formats, e.g.
+ *   "CPN: 5.000% Due : 1/1/2045 Callable at $100.000 on 1/1/2035"
+ *   "... Cpn 5.000% Due 03/15/45 Dtd 12/17/24 ... Call 03/15/35 @ 100.000"
+ *   "... 5% Due 07/01/2045 Callable 07/01/2034 @ 100"
+ *   "... Ser a Jun23 05.000%Oct01 2048 ..."
+ * Returns undefined when nothing is found.
+ */
+export function fixedIncomeTerms(sec: PlaidSecurity): FixedIncomeTerms | undefined {
+  const terms: FixedIncomeTerms = {};
+  const fi = sec.fixed_income;
+  if (fi?.yield_rate?.type === "coupon") terms.couponRate = fi.yield_rate.percentage;
+  if (fi?.maturity_date) terms.maturityDate = fi.maturity_date;
+
+  const name = sec.name || "";
+  if (terms.couponRate === undefined) {
+    const cpn = name.match(/\bcpn:?\s*(\d+(?:\.\d+)?)\s*%/i) || name.match(/(\d+(?:\.\d+)?)\s*%/);
+    if (cpn) terms.couponRate = parseFloat(cpn[1]);
+  }
+  if (!terms.maturityDate) {
+    const due = name.match(/\bdue\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i);
+    if (due) terms.maturityDate = usDate(due[1]);
+  }
+  if (!terms.maturityDate) {
+    // "05.000%Oct01 2048"
+    const md = name.match(/%\s*([A-Z][a-z]{2})(\d{2})\s+(\d{4})/);
+    const month = md && MONTHS.indexOf(md[1]) + 1;
+    if (md && month) terms.maturityDate = `${md[3]}-${String(month).padStart(2, "0")}-${md[2]}`;
+  }
+  const call =
+    name.match(/callable at \$([\d.]+) on (\d{1,2}\/\d{1,2}\/\d{2,4})/i) ||
+    name.match(/\bcall(?:able)?\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s*@\s*([\d.]+)/i);
+  if (call) {
+    const priceFirst = call[0].toLowerCase().includes(" at $");
+    terms.callDate = usDate(priceFirst ? call[2] : call[1]);
+    terms.callPrice = parseFloat(priceFirst ? call[1] : call[2]);
+  }
+
+  return Object.keys(terms).length ? terms : undefined;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "M/D/YYYY" or "MM/DD/YY" -> "YYYY-MM-DD" (two-digit years are 20xx). */
+function usDate(s: string): string {
+  const [m, d, y] = s.split("/");
+  const year = y.length === 2 ? `20${y}` : y;
+  return `${year}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
 }
 
 function defaultDateFrom(days: number): string {

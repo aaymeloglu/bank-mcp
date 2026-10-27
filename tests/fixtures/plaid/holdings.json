@@ -1,0 +1,77 @@
+{
+  "accounts": [],
+  "holdings": [
+    {
+      "account_id": "plaid_acc_brokerage",
+      "security_id": "sec_muni",
+      "quantity": 250000,
+      "institution_price": 101.25,
+      "institution_price_as_of": "2026-10-26",
+      "institution_value": 253125,
+      "cost_basis": 262500,
+      "iso_currency_code": "USD"
+    },
+    {
+      "account_id": "plaid_acc_brokerage",
+      "security_id": "sec_cash",
+      "quantity": 1200.5,
+      "institution_price": 1,
+      "institution_price_as_of": "2026-10-27",
+      "institution_value": 1200.5,
+      "cost_basis": null,
+      "iso_currency_code": "USD"
+    },
+    {
+      "account_id": "plaid_acc_brokerage",
+      "security_id": "sec_tsy",
+      "quantity": 100000,
+      "institution_price": 99.5,
+      "institution_price_as_of": "2026-10-26",
+      "institution_value": 99500,
+      "cost_basis": 99800,
+      "iso_currency_code": "USD"
+    }
+  ],
+  "securities": [
+    {
+      "security_id": "sec_muni",
+      "name": "EXAMPLE CITY WTR REV CPN: 5.000% Due : 11/15/2045 Callable at $100.000 on 11/15/2035",
+      "ticker_symbol": null,
+      "cusip": null,
+      "type": "fixed income",
+      "is_cash_equivalent": false,
+      "close_price": null,
+      "iso_currency_code": "USD",
+      "fixed_income": null
+    },
+    {
+      "security_id": "sec_cash",
+      "name": "U S Dollar",
+      "ticker_symbol": "CUR:USD",
+      "cusip": null,
+      "type": "cash",
+      "is_cash_equivalent": true,
+      "close_price": 1,
+      "iso_currency_code": "USD",
+      "fixed_income": null
+    },
+    {
+      "security_id": "sec_tsy",
+      "name": "US Treasury Note - 3.50% 30/09/2029 USD 100",
+      "ticker_symbol": null,
+      "cusip": null,
+      "type": "fixed income",
+      "is_cash_equivalent": false,
+      "close_price": null,
+      "iso_currency_code": "USD",
+      "fixed_income": {
+        "yield_rate": { "percentage": 3.5, "type": "coupon" },
+        "maturity_date": "2029-09-30",
+        "issue_date": "2024-09-30",
+        "face_value": 100
+      }
+    }
+  ],
+  "item": {},
+  "request_id": "req_holdings"
+}

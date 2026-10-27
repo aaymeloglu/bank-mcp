@@ -2,7 +2,7 @@
  * Simple in-memory TTL cache.
  *
  * Dies with the process — no disk persistence.
- * TTLs: balances 5min, transactions 15min, accounts 1hr.
+ * TTLs: balances 5min, transactions and holdings 15min, accounts 1hr.
  */
 
 interface CacheEntry<T> {
@@ -39,4 +39,5 @@ export const TTL = {
   ACCOUNTS: 60 * 60 * 1000, // 1 hour
   TRANSACTIONS: 15 * 60 * 1000, // 15 minutes
   BALANCES: 5 * 60 * 1000, // 5 minutes
+  HOLDINGS: 15 * 60 * 1000, // 15 minutes
 } as const;
