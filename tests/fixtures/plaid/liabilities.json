@@ -1,0 +1,58 @@
+{
+  "accounts": [],
+  "liabilities": {
+    "credit": [
+      {
+        "account_id": "plaid_acc_card",
+        "aprs": [
+          { "apr_percentage": 24.49, "apr_type": "purchase_apr", "balance_subject_to_apr": null, "interest_charge_amount": null },
+          { "apr_percentage": 29.49, "apr_type": "cash_apr", "balance_subject_to_apr": null, "interest_charge_amount": null }
+        ],
+        "cash_advance_limit": 500,
+        "is_overdue": false,
+        "last_payment_amount": 1834.12,
+        "last_payment_date": "2026-10-03",
+        "last_statement_balance": 2210.55,
+        "last_statement_issue_date": "2026-10-12",
+        "minimum_payment_amount": 40,
+        "next_payment_due_date": "2026-11-07"
+      }
+    ],
+    "loan": [
+      {
+        "account_id": "plaid_acc_auto",
+        "account_number": "SHOULD_NOT_APPEAR",
+        "compounding_period": null,
+        "interest_rate": { "percentage": 5.49, "type": null },
+        "last_payment_amount": 612.3,
+        "last_payment_date": "2026-10-15",
+        "loan_term_months": 60,
+        "maturity_date": "2029-03-15",
+        "next_payment_amount": 612.3,
+        "next_payment_due_date": "2026-11-15",
+        "origination_date": null,
+        "origination_principal_amount": 32000,
+        "payment_count": 31,
+        "payment_frequency": "monthly",
+        "payoff_amount": null,
+        "principal_balance": 17950.4,
+        "ytd_interest_paid": 812
+      }
+    ],
+    "mortgage": null,
+    "student": [
+      {
+        "account_id": "plaid_acc_student",
+        "interest_rate_percentage": 4.5,
+        "is_overdue": false,
+        "minimum_payment_amount": 210,
+        "next_payment_due_date": "2026-11-20",
+        "expected_payoff_date": "2032-06-01",
+        "origination_principal_amount": 25000,
+        "ytd_interest_paid": 640
+      }
+    ]
+  },
+  "item": {},
+  "request_id": "req_liab"
+}

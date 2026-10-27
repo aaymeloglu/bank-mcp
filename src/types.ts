@@ -78,6 +78,45 @@ export interface InvestmentTransactionFilter {
   dateTo?: string;
 }
 
+export interface Apr {
+  type?: string; // "purchase_apr" | "cash_apr" | "balance_transfer_apr" | ...
+  percentage: number;
+}
+
+/** Payment terms for a credit card or loan. Account numbers are never included. */
+export interface Liability {
+  accountId: string;
+  kind: "credit" | "loan" | "mortgage" | "student";
+  nextPaymentDueDate?: string; // "YYYY-MM-DD"
+  nextPaymentAmount?: number; // minimum payment for cards
+  lastPaymentDate?: string;
+  lastPaymentAmount?: number;
+  isOverdue?: boolean;
+  // Cards
+  lastStatementDate?: string;
+  lastStatementBalance?: number;
+  aprs?: Apr[];
+  // Loans
+  interestRate?: number; // percent
+  principalBalance?: number;
+  payoffAmount?: number;
+  originationPrincipal?: number;
+  maturityDate?: string;
+  ytdInterestPaid?: number;
+}
+
+export interface ConnectionStatus {
+  connectionId: string;
+  provider: string;
+  institution?: string;
+  ok: boolean;
+  errorCode?: string; // e.g. "ITEM_LOGIN_REQUIRED"
+  errorMessage?: string;
+  lastSuccessfulUpdate?: Record<string, string>; // product -> ISO timestamp
+  lastFailedUpdate?: Record<string, string>;
+  consentExpiresAt?: string;
+}
+
 export interface TransactionFilter {
   dateFrom?: string;
   dateTo?: string;

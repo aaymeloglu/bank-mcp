@@ -10,6 +10,8 @@ import type {
   InvestmentTransaction,
   InvestmentTransactionFilter,
   FixedIncomeTerms,
+  Liability,
+  ConnectionStatus,
 } from "../../types.js";
 
 const ENVIRONMENTS: Record<string, string> = {
@@ -286,6 +288,78 @@ export class PlaidProvider extends BankProvider {
     return all;
   }
 
+  /**
+   * /liabilities/get. Items with no card or loan accounts (NO_LIABILITY_ACCOUNTS)
+   * or at institutions without liabilities data, e.g. brokerages
+   * (PRODUCTS_NOT_SUPPORTED), are an empty result, not a failure.
+   */
+  async getLiabilities(
+    config: Record<string, unknown>,
+    accountIds?: string[],
+  ): Promise<Liability[]> {
+    const pc = parseConfig(config);
+
+    const body: Record<string, unknown> = accountIds?.length
+      ? { options: { account_ids: accountIds } }
+      : {};
+    let data: PlaidLiabilitiesResponse;
+    try {
+      data = (await plaidPost(pc, "/liabilities/get", body)) as PlaidLiabilitiesResponse;
+    } catch (err) {
+      const code = plaidErrorCode(err);
+      if (code === "NO_LIABILITY_ACCOUNTS" || code === "PRODUCTS_NOT_SUPPORTED") return [];
+      throw err;
+    }
+
+    const l = data.liabilities;
+    return [
+      ...(l.credit ?? []).map(normalizeCredit),
+      ...(l.loan ?? []).map((x) => normalizeLoan(x, "loan")),
+      ...(l.mortgage ?? []).map((x) => normalizeLoan(x, "mortgage")),
+      ...(l.student ?? []).map((x) => normalizeLoan(x, "student")),
+    ];
+  }
+
+  /**
+   * /item/get. A broken login shows up as item.error on a successful response;
+   * a revoked or invalid token makes the call itself fail.
+   */
+  async getConnectionStatus(
+    config: Record<string, unknown>,
+  ): Promise<Omit<ConnectionStatus, "connectionId" | "provider">> {
+    const pc = parseConfig(config);
+
+    let data: PlaidItemResponse;
+    try {
+      data = (await plaidPost(pc, "/item/get", {})) as PlaidItemResponse;
+    } catch (err) {
+      return {
+        ok: false,
+        errorCode: plaidErrorCode(err),
+        errorMessage: err instanceof Error ? err.message : String(err),
+      };
+    }
+
+    const { item, status } = data;
+    const lastSuccessfulUpdate: Record<string, string> = {};
+    const lastFailedUpdate: Record<string, string> = {};
+    for (const [product, s] of Object.entries(status ?? {})) {
+      if (!s || typeof s !== "object") continue;
+      if (s.last_successful_update) lastSuccessfulUpdate[product] = s.last_successful_update;
+      if (s.last_failed_update) lastFailedUpdate[product] = s.last_failed_update;
+    }
+
+    return {
+      institution: item.institution_name || undefined,
+      ok: !item.error,
+      errorCode: item.error?.error_code || undefined,
+      errorMessage: item.error?.error_message || undefined,
+      ...(Object.keys(lastSuccessfulUpdate).length ? { lastSuccessfulUpdate } : {}),
+      ...(Object.keys(lastFailedUpdate).length ? { lastFailedUpdate } : {}),
+      consentExpiresAt: item.consent_expiration_time || undefined,
+    };
+  }
+
 }
 
 // --- Raw Plaid API types ---
@@ -405,6 +479,65 @@ interface PlaidInvestmentTransactionsResponse {
   request_id: string;
 }
 
+interface PlaidCreditLiability {
+  account_id: string | null;
+  aprs: Array<{ apr_type: string | null; apr_percentage: number }> | null;
+  is_overdue: boolean | null;
+  last_payment_amount: number | null;
+  last_payment_date: string | null;
+  last_statement_balance: number | null;
+  last_statement_issue_date: string | null;
+  minimum_payment_amount: number | null;
+  next_payment_due_date: string | null;
+}
+
+/** Loan, mortgage and student liabilities share most fields under slightly different names. */
+interface PlaidLoanLiability {
+  account_id: string | null;
+  interest_rate?: { percentage: number | null; type: string | null } | null;
+  interest_rate_percentage?: number | null;
+  is_overdue?: boolean | null;
+  past_due_amount?: number | null;
+  last_payment_amount?: number | null;
+  last_payment_date?: string | null;
+  next_payment_amount?: number | null;
+  next_monthly_payment?: number | null;
+  minimum_payment_amount?: number | null;
+  next_payment_due_date?: string | null;
+  principal_balance?: number | null;
+  payoff_amount?: number | null;
+  origination_principal_amount?: number | null;
+  maturity_date?: string | null;
+  expected_payoff_date?: string | null;
+  ytd_interest_paid?: number | null;
+}
+
+interface PlaidLiabilitiesResponse {
+  accounts: PlaidAccount[];
+  liabilities: {
+    credit: PlaidCreditLiability[] | null;
+    loan?: PlaidLoanLiability[] | null;
+    mortgage: PlaidLoanLiability[] | null;
+    student: PlaidLoanLiability[] | null;
+  };
+  item: Record<string, unknown>;
+  request_id: string;
+}
+
+interface PlaidItemResponse {
+  item: {
+    item_id: string;
+    institution_name?: string | null;
+    error: { error_code: string; error_message: string } | null;
+    consent_expiration_time: string | null;
+  };
+  status?: Record<
+    string,
+    { last_successful_update?: string | null; last_failed_update?: string | null } | null
+  > | null;
+  request_id: string;
+}
+
 /**
  * Normalize a Plaid transaction.
  *
@@ -451,6 +584,53 @@ function normalizeTransaction(raw: PlaidTransaction): Transaction {
     reference: raw.original_description || raw.name,
     rawData: raw as unknown as Record<string, unknown>,
   };
+}
+
+/** Pull Plaid's error_code out of an httpFetch error ("HTTP 400 ...: {json}"). */
+function plaidErrorCode(err: unknown): string | undefined {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.match(/"error_code"\s*:\s*"(\w+)"/)?.[1];
+}
+
+/** Drop undefined fields so tool output only shows what the bank reported. */
+function compact<T extends object>(obj: T): T {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([, v]) => v !== undefined && v !== null),
+  ) as T;
+}
+
+function normalizeCredit(c: PlaidCreditLiability): Liability {
+  return compact({
+    accountId: c.account_id ?? "",
+    kind: "credit" as const,
+    nextPaymentDueDate: c.next_payment_due_date ?? undefined,
+    nextPaymentAmount: c.minimum_payment_amount ?? undefined,
+    lastPaymentDate: c.last_payment_date ?? undefined,
+    lastPaymentAmount: c.last_payment_amount ?? undefined,
+    isOverdue: c.is_overdue ?? undefined,
+    lastStatementDate: c.last_statement_issue_date ?? undefined,
+    lastStatementBalance: c.last_statement_balance ?? undefined,
+    aprs: c.aprs?.map((a) => compact({ type: a.apr_type ?? undefined, percentage: a.apr_percentage })),
+  });
+}
+
+function normalizeLoan(l: PlaidLoanLiability, kind: "loan" | "mortgage" | "student"): Liability {
+  return compact({
+    accountId: l.account_id ?? "",
+    kind,
+    nextPaymentDueDate: l.next_payment_due_date ?? undefined,
+    nextPaymentAmount:
+      l.next_payment_amount ?? l.next_monthly_payment ?? l.minimum_payment_amount ?? undefined,
+    lastPaymentDate: l.last_payment_date ?? undefined,
+    lastPaymentAmount: l.last_payment_amount ?? undefined,
+    isOverdue: l.is_overdue ?? (l.past_due_amount ? l.past_due_amount > 0 : undefined),
+    interestRate: l.interest_rate?.percentage ?? l.interest_rate_percentage ?? undefined,
+    principalBalance: l.principal_balance ?? undefined,
+    payoffAmount: l.payoff_amount ?? undefined,
+    originationPrincipal: l.origination_principal_amount ?? undefined,
+    maturityDate: l.maturity_date ?? l.expected_payoff_date ?? undefined,
+    ytdInterestPaid: l.ytd_interest_paid ?? undefined,
+  });
 }
 
 function normalizeHolding(h: PlaidHolding, sec: PlaidSecurity | undefined): Holding {

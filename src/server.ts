@@ -18,6 +18,8 @@ import {
   listInvestmentTransactionsSchema,
   listInvestmentTransactions,
 } from "./tools/list-investment-transactions.js";
+import { getLiabilitiesSchema, getLiabilities } from "./tools/get-liabilities.js";
+import { connectionStatusSchema, connectionStatus } from "./tools/connection-status.js";
 import {
   spendingSummarySchema,
   spendingSummary,
@@ -101,6 +103,37 @@ const investmentTransactionSchema = z.object({
   ticker: z.string().optional(),
 });
 
+const liabilitySchema = z.object({
+  accountId: z.string(),
+  kind: z.enum(["credit", "loan", "mortgage", "student"]),
+  nextPaymentDueDate: z.string().optional().describe("YYYY-MM-DD"),
+  nextPaymentAmount: z.number().optional().describe("Minimum payment for cards"),
+  lastPaymentDate: z.string().optional(),
+  lastPaymentAmount: z.number().optional(),
+  isOverdue: z.boolean().optional(),
+  lastStatementDate: z.string().optional(),
+  lastStatementBalance: z.number().optional(),
+  aprs: z.array(z.object({ type: z.string().optional(), percentage: z.number() })).optional(),
+  interestRate: z.number().optional().describe("Percent"),
+  principalBalance: z.number().optional(),
+  payoffAmount: z.number().optional(),
+  originationPrincipal: z.number().optional(),
+  maturityDate: z.string().optional(),
+  ytdInterestPaid: z.number().optional(),
+});
+
+const connectionStatusItemSchema = z.object({
+  connectionId: z.string(),
+  provider: z.string(),
+  institution: z.string().optional(),
+  ok: z.boolean(),
+  errorCode: z.string().optional().describe('e.g. "ITEM_LOGIN_REQUIRED" = user must re-link'),
+  errorMessage: z.string().optional(),
+  lastSuccessfulUpdate: z.record(z.string(), z.string()).optional().describe("Product -> ISO timestamp"),
+  lastFailedUpdate: z.record(z.string(), z.string()).optional(),
+  consentExpiresAt: z.string().optional(),
+});
+
 const spendingGroupSchema = z.object({
   name: z.string(),
   totalSpent: z.number(),
@@ -115,6 +148,8 @@ const holdingsOutput = z.object({ holdings: z.array(holdingSchema) });
 const investmentTransactionsOutput = z.object({
   transactions: z.array(investmentTransactionSchema),
 });
+const liabilitiesOutput = z.object({ liabilities: z.array(liabilitySchema) });
+const connectionStatusOutput = z.object({ connections: z.array(connectionStatusItemSchema) });
 const spendingSummaryOutput = z.object({
   groups: z.array(spendingGroupSchema),
   totalSpent: z.number(),
@@ -176,8 +211,8 @@ export function createServer(): McpServer {
     {
       instructions:
         "Read-only access to bank accounts, balances and transactions across the configured " +
-        "connections, plus brokerage holdings and investment transactions where the provider " +
-        "supports them. Start with list_accounts to learn account UIDs and connection IDs; " +
+        "connections, plus brokerage holdings, investment transactions and card/loan payment " +
+        "terms where the provider supports them. If a tool fails, run connection_status. Start with list_accounts to learn account UIDs and connection IDs; " +
         "list_transactions defaults to the last 90 days. Amounts are signed (negative = expense).",
     },
   );
@@ -281,6 +316,40 @@ export function createServer(): McpServer {
       guarded(async () => {
         const transactions = await listInvestmentTransactions(args);
         return ok(transactions, { transactions });
+      }),
+  );
+
+  server.registerTool(
+    "get_liabilities",
+    {
+      title: "Get liabilities",
+      description:
+        "Payment terms for credit cards and loans: next due date and amount (minimum payment for cards), last payment, last statement balance, APRs, overdue flag, and for loans the rate, principal, payoff and maturity. Use for \"when is my card due\" or \"did I pay it\".",
+      inputSchema: getLiabilitiesSchema.shape,
+      outputSchema: liabilitiesOutput.shape,
+      annotations: READ_ONLY,
+    },
+    (args) =>
+      guarded(async () => {
+        const liabilities = await getLiabilities(args);
+        return ok(liabilities, { liabilities });
+      }),
+  );
+
+  server.registerTool(
+    "connection_status",
+    {
+      title: "Connection status",
+      description:
+        "Health of each bank connection: ok, or an error such as ITEM_LOGIN_REQUIRED (the user must re-link that bank), plus when each product last refreshed successfully. Check this when other tools fail or return stale data.",
+      inputSchema: connectionStatusSchema.shape,
+      outputSchema: connectionStatusOutput.shape,
+      annotations: READ_ONLY,
+    },
+    (args) =>
+      guarded(async () => {
+        const connections = await connectionStatus(args);
+        return ok(connections, { connections });
       }),
   );
 

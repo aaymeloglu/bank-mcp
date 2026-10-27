@@ -7,6 +7,8 @@ import type {
   Holding,
   InvestmentTransaction,
   InvestmentTransactionFilter,
+  Liability,
+  ConnectionStatus,
 } from "../types.js";
 
 /**
@@ -68,6 +70,20 @@ export abstract class BankProvider {
     accountIds: string[] | undefined,
     filter?: InvestmentTransactionFilter,
   ): Promise<InvestmentTransaction[]>;
+
+  /** Optional: card and loan payment terms (due dates, APRs, payoff). */
+  getLiabilities?(
+    config: Record<string, unknown>,
+    accountIds?: string[],
+  ): Promise<Liability[]>;
+
+  /**
+   * Optional: whether the connection is healthy (e.g. needs a re-login) and
+   * when data last refreshed. connectionId/provider are filled in by the caller.
+   */
+  getConnectionStatus?(
+    config: Record<string, unknown>,
+  ): Promise<Omit<ConnectionStatus, "connectionId" | "provider">>;
 
   /** Describe config fields for the init wizard. */
   abstract getConfigSchema(): ConfigField[];
