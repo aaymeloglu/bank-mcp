@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { PlaidProvider } from "../../../src/providers/plaid/index.js";
+import { PlaidProvider, resetTransactionSync } from "../../../src/providers/plaid/index.js";
 
 // Mock the HTTP layer
 vi.mock("../../../src/utils/http.js", () => ({
@@ -26,6 +26,8 @@ describe("PlaidProvider", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
+    resetTransactionSync();
   });
 
   describe("validateConfig", () => {
@@ -102,13 +104,32 @@ describe("PlaidProvider", () => {
   });
 
   describe("listTransactions", () => {
-    it("flips Plaid amount signs (positive → negative for debits)", async () => {
-      mockedFetch.mockResolvedValueOnce(transactionsFixture);
+    // Fixture dates are Feb 2026; ask for that window explicitly.
+    const FEB = { dateFrom: "2026-02-01", dateTo: "2026-02-28" };
+    const fixtureTxs = transactionsFixture.transactions;
 
-      const txs = await provider.listTransactions(
-        TEST_CONFIG,
-        "plaid_acc_checking",
-      );
+    function syncPage(
+      added: unknown[],
+      opts: { modified?: unknown[]; removed?: string[]; next_cursor?: string; has_more?: boolean } = {},
+    ) {
+      return {
+        added,
+        modified: opts.modified ?? [],
+        removed: (opts.removed ?? []).map((transaction_id) => ({ transaction_id })),
+        next_cursor: opts.next_cursor ?? "cursor-1",
+        has_more: opts.has_more ?? false,
+        request_id: "r",
+      };
+    }
+
+    function bodyOf(call: number) {
+      return JSON.parse((mockedFetch.mock.calls[call][1] as { body: string }).body);
+    }
+
+    it("flips Plaid amount signs (positive → negative for debits)", async () => {
+      mockedFetch.mockResolvedValueOnce(syncPage(fixtureTxs));
+
+      const txs = await provider.listTransactions(TEST_CONFIG, "plaid_acc_checking", FEB);
 
       // Burger King: Plaid amount=28.34 (positive = money out) → our amount=-28.34
       const bk = txs.find((t) => t.id === "plaid_tx_001");
@@ -118,12 +139,9 @@ describe("PlaidProvider", () => {
     });
 
     it("flips income correctly (negative → positive)", async () => {
-      mockedFetch.mockResolvedValueOnce(transactionsFixture);
+      mockedFetch.mockResolvedValueOnce(syncPage(fixtureTxs));
 
-      const txs = await provider.listTransactions(
-        TEST_CONFIG,
-        "plaid_acc_checking",
-      );
+      const txs = await provider.listTransactions(TEST_CONFIG, "plaid_acc_checking", FEB);
 
       // Payroll: Plaid amount=-3500 (negative = money in) → our amount=3500
       const salary = txs.find((t) => t.id === "plaid_tx_002");
@@ -133,12 +151,9 @@ describe("PlaidProvider", () => {
     });
 
     it("uses personal_finance_category.detailed for category", async () => {
-      mockedFetch.mockResolvedValueOnce(transactionsFixture);
+      mockedFetch.mockResolvedValueOnce(syncPage(fixtureTxs));
 
-      const txs = await provider.listTransactions(
-        TEST_CONFIG,
-        "plaid_acc_checking",
-      );
+      const txs = await provider.listTransactions(TEST_CONFIG, "plaid_acc_checking", FEB);
 
       const bk = txs.find((t) => t.id === "plaid_tx_001");
       expect(bk!.category).toBe("FOOD_AND_DRINK_FAST_FOOD");
@@ -148,12 +163,9 @@ describe("PlaidProvider", () => {
     });
 
     it("extracts merchant from counterparties when merchant_name is null", async () => {
-      mockedFetch.mockResolvedValueOnce(transactionsFixture);
+      mockedFetch.mockResolvedValueOnce(syncPage(fixtureTxs));
 
-      const txs = await provider.listTransactions(
-        TEST_CONFIG,
-        "plaid_acc_checking",
-      );
+      const txs = await provider.listTransactions(TEST_CONFIG, "plaid_acc_checking", FEB);
 
       // Burger King: merchant_name is "Burger King" directly
       const bk = txs.find((t) => t.id === "plaid_tx_001");
@@ -165,56 +177,100 @@ describe("PlaidProvider", () => {
       expect(salary!.description).toBe("TECHCORP INC PAYROLL");
     });
 
-    it("handles pagination with offset", async () => {
-      const page1 = {
-        ...transactionsFixture,
-        transactions: transactionsFixture.transactions.slice(0, 3),
-        total_transactions: 5,
-      };
-      const page2 = {
-        ...transactionsFixture,
-        transactions: transactionsFixture.transactions.slice(3),
-        total_transactions: 5,
-      };
+    it("filters to the account and date range locally, newest first", async () => {
+      const other = { ...fixtureTxs[0], transaction_id: "other_acct", account_id: "plaid_acc_savings" };
+      const old = { ...fixtureTxs[0], transaction_id: "old", date: "2025-12-01" };
+      mockedFetch.mockResolvedValueOnce(syncPage([...fixtureTxs, other, old]));
 
-      mockedFetch.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2);
+      const txs = await provider.listTransactions(TEST_CONFIG, "plaid_acc_checking", FEB);
 
-      const txs = await provider.listTransactions(
-        TEST_CONFIG,
-        "plaid_acc_checking",
-      );
+      expect(txs.map((t) => t.id)).toEqual([
+        "plaid_tx_001",
+        "plaid_tx_002",
+        "plaid_tx_003",
+        "plaid_tx_004",
+        "plaid_tx_005",
+      ]);
+    });
+
+    it("follows has_more with next_cursor, starting with no cursor", async () => {
+      mockedFetch
+        .mockResolvedValueOnce(syncPage(fixtureTxs.slice(0, 3), { next_cursor: "c1", has_more: true }))
+        .mockResolvedValueOnce(syncPage(fixtureTxs.slice(3), { next_cursor: "c2" }));
+
+      const txs = await provider.listTransactions(TEST_CONFIG, "plaid_acc_checking", FEB);
 
       expect(txs).toHaveLength(5);
       expect(mockedFetch).toHaveBeenCalledTimes(2);
+      expect(String(mockedFetch.mock.calls[0][0])).toContain("/transactions/sync");
+      expect(bodyOf(0).cursor).toBeUndefined();
+      expect(bodyOf(1).cursor).toBe("c1");
+    });
 
-      // Second call should have offset=3
-      const secondCallBody = JSON.parse(
-        (mockedFetch.mock.calls[1][1] as { body: string }).body,
+    it("applies modified and removed on the next sync, sending the saved cursor", async () => {
+      vi.useFakeTimers();
+      mockedFetch.mockResolvedValueOnce(syncPage(fixtureTxs, { next_cursor: "c1" }));
+      await provider.listTransactions(TEST_CONFIG, "plaid_acc_checking", FEB);
+
+      vi.advanceTimersByTime(61_000);
+      const renamed = { ...fixtureTxs[2], name: "NETFLIX RENAMED", merchant_name: null, counterparties: [] };
+      mockedFetch.mockResolvedValueOnce(
+        syncPage([], { modified: [renamed], removed: ["plaid_tx_001"], next_cursor: "c2" }),
       );
-      expect(secondCallBody.options.offset).toBe(3);
+      const txs = await provider.listTransactions(TEST_CONFIG, "plaid_acc_checking", FEB);
+
+      expect(bodyOf(1).cursor).toBe("c1");
+      expect(txs.find((t) => t.id === "plaid_tx_001")).toBeUndefined();
+      expect(txs.find((t) => t.id === "plaid_tx_003")!.description).toBe("NETFLIX RENAMED");
+      expect(txs).toHaveLength(4);
+    });
+
+    it("reuses a sync from the last minute instead of calling Plaid again", async () => {
+      mockedFetch.mockResolvedValueOnce(syncPage(fixtureTxs));
+
+      await provider.listTransactions(TEST_CONFIG, "plaid_acc_checking", FEB);
+      await provider.listTransactions(TEST_CONFIG, "plaid_acc_savings", FEB);
+
+      expect(mockedFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("restarts pagination from the original cursor when data changes mid-sync", async () => {
+      mockedFetch
+        .mockResolvedValueOnce(syncPage(fixtureTxs.slice(0, 2), { next_cursor: "c1", has_more: true }))
+        .mockRejectedValueOnce(
+          new Error(
+            'HTTP 400 Bad Request: {"error_code":"TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION","error_type":"TRANSACTIONS_ERROR"}',
+          ),
+        )
+        .mockResolvedValueOnce(syncPage(fixtureTxs, { next_cursor: "c9" }));
+
+      const txs = await provider.listTransactions(TEST_CONFIG, "plaid_acc_checking", FEB);
+
+      expect(txs).toHaveLength(5);
+      expect(mockedFetch).toHaveBeenCalledTimes(3);
+      expect(bodyOf(2).cursor).toBeUndefined();
     });
 
     it("filters by type", async () => {
-      mockedFetch.mockResolvedValueOnce(transactionsFixture);
+      mockedFetch.mockResolvedValueOnce(syncPage(fixtureTxs));
 
-      const txs = await provider.listTransactions(
-        TEST_CONFIG,
-        "plaid_acc_checking",
-        { type: "credit" },
-      );
+      const txs = await provider.listTransactions(TEST_CONFIG, "plaid_acc_checking", {
+        ...FEB,
+        type: "credit",
+      });
 
       expect(txs).toHaveLength(1);
       expect(txs[0].amount).toBe(3500);
     });
 
     it("filters by amount range", async () => {
-      mockedFetch.mockResolvedValueOnce(transactionsFixture);
+      mockedFetch.mockResolvedValueOnce(syncPage(fixtureTxs));
 
-      const txs = await provider.listTransactions(
-        TEST_CONFIG,
-        "plaid_acc_checking",
-        { amountMin: 20, amountMax: 100 },
-      );
+      const txs = await provider.listTransactions(TEST_CONFIG, "plaid_acc_checking", {
+        ...FEB,
+        amountMin: 20,
+        amountMax: 100,
+      });
 
       // Should include: Burger King (28.34), Whole Foods (89.50)
       // Should exclude: salary (3500), Netflix (15.99), transfer (500)
