@@ -135,33 +135,14 @@ export class PlaidProvider extends BankProvider {
     const startDate = filter?.dateFrom || defaultDateFrom(90);
     const endDate = filter?.dateTo || today();
 
-    const allTx: Transaction[] = [];
-    let offset = 0;
-    const pageSize = 500;
+    const synced = await syncTransactions(pc);
 
-    // Offset-based pagination — loop until we have all transactions
-    do {
-      const data = (await plaidPost(pc, "/transactions/get", {
-        start_date: startDate,
-        end_date: endDate,
-        options: {
-          account_ids: [accountId],
-          count: pageSize,
-          offset,
-          include_personal_finance_category: true,
-        },
-      })) as PlaidTransactionsResponse;
-
-      for (const raw of data.transactions) {
-        allTx.push(normalizeTransaction(raw));
-      }
-
-      offset += data.transactions.length;
-      if (offset >= data.total_transactions) break;
-    } while (true);
+    let filtered = [...synced.values()]
+      .filter((t) => t.account_id === accountId && t.date >= startDate && t.date <= endDate)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .map(normalizeTransaction);
 
     // Apply local filters
-    let filtered = allTx;
     if (filter?.amountMin !== undefined) {
       filtered = filtered.filter((t) => Math.abs(t.amount) >= filter.amountMin!);
     }
@@ -362,6 +343,89 @@ export class PlaidProvider extends BankProvider {
 
 }
 
+// --- /transactions/sync state ---
+
+/**
+ * Per-item transaction mirror kept for the life of the process. The first call
+ * pulls the item's full history; later calls send the cursor and apply only
+ * what was added, modified or removed since.
+ */
+interface SyncState {
+  cursor: string;
+  transactions: Map<string, PlaidTransaction>;
+  syncedAt: number;
+}
+
+const syncStates = new Map<string, SyncState>();
+const syncsInFlight = new Map<string, Promise<Map<string, PlaidTransaction>>>();
+
+/** Calls within this window reuse the last sync (list_transactions asks once per account). */
+const SYNC_REUSE_MS = 60 * 1000;
+
+/** Test hook: forget all synced state. */
+export function resetTransactionSync(): void {
+  syncStates.clear();
+  syncsInFlight.clear();
+}
+
+async function syncTransactions(pc: PlaidConfig): Promise<Map<string, PlaidTransaction>> {
+  const key = pc.accessToken;
+  const state = syncStates.get(key);
+  if (state && Date.now() - state.syncedAt < SYNC_REUSE_MS) return state.transactions;
+
+  const inFlight = syncsInFlight.get(key);
+  if (inFlight) return inFlight;
+
+  const run = runSync(pc, state).finally(() => syncsInFlight.delete(key));
+  syncsInFlight.set(key, run);
+  return run;
+}
+
+async function runSync(
+  pc: PlaidConfig,
+  state: SyncState | undefined,
+): Promise<Map<string, PlaidTransaction>> {
+  const startCursor = state?.cursor ?? "";
+
+  // Plaid's guidance: collect every page before applying any of them, and if
+  // the data changes mid-pagination, restart from the cursor we began with.
+  for (let attempt = 0; ; attempt++) {
+    const added: PlaidTransaction[] = [];
+    const modified: PlaidTransaction[] = [];
+    const removed: string[] = [];
+    let cursor = startCursor;
+
+    try {
+      let hasMore = true;
+      while (hasMore) {
+        const page = (await plaidPost(pc, "/transactions/sync", {
+          ...(cursor ? { cursor } : {}),
+          count: 500,
+          options: { include_original_description: true },
+        })) as PlaidTransactionsSyncResponse;
+
+        added.push(...page.added);
+        modified.push(...page.modified);
+        removed.push(...page.removed.map((r) => r.transaction_id));
+        cursor = page.next_cursor;
+        hasMore = page.has_more;
+      }
+    } catch (err) {
+      if (plaidErrorCode(err) === "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION" && attempt < 3) {
+        continue;
+      }
+      throw err;
+    }
+
+    const transactions = new Map(state?.transactions);
+    for (const t of [...added, ...modified]) transactions.set(t.transaction_id, t);
+    for (const id of removed) transactions.delete(id);
+
+    syncStates.set(pc.accessToken, { cursor, transactions, syncedAt: Date.now() });
+    return transactions;
+  }
+}
+
 // --- Raw Plaid API types ---
 
 interface PlaidAccountsResponse {
@@ -385,11 +449,12 @@ interface PlaidAccount {
   };
 }
 
-interface PlaidTransactionsResponse {
-  accounts: PlaidAccount[];
-  transactions: PlaidTransaction[];
-  total_transactions: number;
-  item: Record<string, unknown>;
+interface PlaidTransactionsSyncResponse {
+  added: PlaidTransaction[];
+  modified: PlaidTransaction[];
+  removed: Array<{ transaction_id: string; account_id?: string }>;
+  next_cursor: string;
+  has_more: boolean;
   request_id: string;
 }
 
