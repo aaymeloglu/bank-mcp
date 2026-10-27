@@ -13,6 +13,11 @@ import {
   searchTransactions,
 } from "./tools/search-transactions.js";
 import { getBalanceSchema, getBalance } from "./tools/get-balance.js";
+import { getHoldingsSchema, getHoldings } from "./tools/get-holdings.js";
+import {
+  listInvestmentTransactionsSchema,
+  listInvestmentTransactions,
+} from "./tools/list-investment-transactions.js";
 import {
   spendingSummarySchema,
   spendingSummary,
@@ -55,6 +60,47 @@ const balanceSchema = z.object({
   type: z.string().describe('"closingBooked" | "expected" | etc.'),
 });
 
+const fixedIncomeSchema = z.object({
+  couponRate: z.number().optional().describe("Percent, e.g. 5 for 5.000%"),
+  maturityDate: z.string().optional().describe("YYYY-MM-DD"),
+  callDate: z.string().optional().describe("YYYY-MM-DD"),
+  callPrice: z.number().optional().describe("Per 100 face"),
+});
+
+const holdingSchema = z.object({
+  accountId: z.string(),
+  securityId: z.string(),
+  name: z.string(),
+  type: z.string().optional(),
+  ticker: z.string().optional(),
+  cusip: z.string().optional(),
+  isCashEquivalent: z.boolean(),
+  quantity: z.number().describe("Shares, or face value for bonds"),
+  price: z.number().optional().describe("Bonds: per 100 face"),
+  priceAsOf: z.string().optional(),
+  value: z.number(),
+  costBasis: z.number().optional(),
+  currency: z.string(),
+  fixedIncome: fixedIncomeSchema.optional(),
+});
+
+const investmentTransactionSchema = z.object({
+  id: z.string(),
+  accountId: z.string(),
+  date: z.string().describe("YYYY-MM-DD"),
+  name: z.string(),
+  type: z.string(),
+  subtype: z.string().optional(),
+  quantity: z.number(),
+  price: z.number(),
+  amount: z.number().describe("Signed: negative = cash leaving the account"),
+  fees: z.number().optional(),
+  currency: z.string(),
+  securityId: z.string().optional(),
+  securityName: z.string().optional(),
+  ticker: z.string().optional(),
+});
+
 const spendingGroupSchema = z.object({
   name: z.string(),
   totalSpent: z.number(),
@@ -65,6 +111,10 @@ const spendingGroupSchema = z.object({
 const accountsOutput = z.object({ accounts: z.array(bankAccountSchema) });
 const transactionsOutput = z.object({ transactions: z.array(transactionSchema) });
 const balancesOutput = z.object({ balances: z.array(balanceSchema) });
+const holdingsOutput = z.object({ holdings: z.array(holdingSchema) });
+const investmentTransactionsOutput = z.object({
+  transactions: z.array(investmentTransactionSchema),
+});
 const spendingSummaryOutput = z.object({
   groups: z.array(spendingGroupSchema),
   totalSpent: z.number(),
@@ -126,7 +176,8 @@ export function createServer(): McpServer {
     {
       instructions:
         "Read-only access to bank accounts, balances and transactions across the configured " +
-        "connections. Start with list_accounts to learn account UIDs and connection IDs; " +
+        "connections, plus brokerage holdings and investment transactions where the provider " +
+        "supports them. Start with list_accounts to learn account UIDs and connection IDs; " +
         "list_transactions defaults to the last 90 days. Amounts are signed (negative = expense).",
     },
   );
@@ -196,6 +247,40 @@ export function createServer(): McpServer {
       guarded(async () => {
         const balances = await getBalance(args);
         return ok(balances, { balances });
+      }),
+  );
+
+  server.registerTool(
+    "get_holdings",
+    {
+      title: "Get holdings",
+      description:
+        "Current positions in brokerage/investment accounts: security, quantity (face value for bonds), price, value, cost basis, and for bonds the coupon, maturity and call date when the broker provides them. Cash and money market funds are included with isCashEquivalent=true.",
+      inputSchema: getHoldingsSchema.shape,
+      outputSchema: holdingsOutput.shape,
+      annotations: READ_ONLY,
+    },
+    (args) =>
+      guarded(async () => {
+        const holdings = await getHoldings(args);
+        return ok(holdings, { holdings });
+      }),
+  );
+
+  server.registerTool(
+    "list_investment_transactions",
+    {
+      title: "List investment transactions",
+      description:
+        "Buys, sells, interest/dividends, fees and transfers in brokerage/investment accounts. Defaults to last 90 days. Amounts are signed (negative = cash leaving the account).",
+      inputSchema: listInvestmentTransactionsSchema.shape,
+      outputSchema: investmentTransactionsOutput.shape,
+      annotations: READ_ONLY,
+    },
+    (args) =>
+      guarded(async () => {
+        const transactions = await listInvestmentTransactions(args);
+        return ok(transactions, { transactions });
       }),
   );
 
