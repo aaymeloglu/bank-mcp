@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { listAccountsSchema, listAccounts } from "./tools/list-accounts.js";
@@ -223,8 +223,8 @@ export function createServer(): McpServer {
       title: "List accounts",
       description:
         "List all bank accounts across configured connections. Returns account UIDs, IBANs, names, and currencies.",
-      inputSchema: listAccountsSchema.shape,
-      outputSchema: accountsOutput.shape,
+      inputSchema: listAccountsSchema,
+      outputSchema: accountsOutput,
       annotations: READ_ONLY,
     },
     (args) =>
@@ -240,8 +240,8 @@ export function createServer(): McpServer {
       title: "List transactions",
       description:
         "List bank transactions with optional filters. Defaults to last 90 days. Supports date range, amount range, and debit/credit type filtering.",
-      inputSchema: listTransactionsSchema.shape,
-      outputSchema: transactionsOutput.shape,
+      inputSchema: listTransactionsSchema,
+      outputSchema: transactionsOutput,
       annotations: READ_ONLY,
     },
     (args) =>
@@ -257,8 +257,8 @@ export function createServer(): McpServer {
       title: "Search transactions",
       description:
         "Full-text search across transaction descriptions, merchant names, and references. Use for finding specific payments or payees.",
-      inputSchema: searchTransactionsSchema.shape,
-      outputSchema: transactionsOutput.shape,
+      inputSchema: searchTransactionsSchema,
+      outputSchema: transactionsOutput,
       annotations: READ_ONLY,
     },
     (args) =>
@@ -274,8 +274,8 @@ export function createServer(): McpServer {
       title: "Get balance",
       description:
         "Get current account balance(s). Returns closing booked balance and expected balance when available.",
-      inputSchema: getBalanceSchema.shape,
-      outputSchema: balancesOutput.shape,
+      inputSchema: getBalanceSchema,
+      outputSchema: balancesOutput,
       annotations: READ_ONLY,
     },
     (args) =>
@@ -291,8 +291,8 @@ export function createServer(): McpServer {
       title: "Get holdings",
       description:
         "Current positions in brokerage/investment accounts: security, quantity (face value for bonds), price, value, cost basis, and for bonds the coupon, maturity and call date when the broker provides them. Cash and money market funds are included with isCashEquivalent=true.",
-      inputSchema: getHoldingsSchema.shape,
-      outputSchema: holdingsOutput.shape,
+      inputSchema: getHoldingsSchema,
+      outputSchema: holdingsOutput,
       annotations: READ_ONLY,
     },
     (args) =>
@@ -308,8 +308,8 @@ export function createServer(): McpServer {
       title: "List investment transactions",
       description:
         "Buys, sells, interest/dividends, fees and transfers in brokerage/investment accounts. Defaults to last 90 days. Amounts are signed (negative = cash leaving the account).",
-      inputSchema: listInvestmentTransactionsSchema.shape,
-      outputSchema: investmentTransactionsOutput.shape,
+      inputSchema: listInvestmentTransactionsSchema,
+      outputSchema: investmentTransactionsOutput,
       annotations: READ_ONLY,
     },
     (args) =>
@@ -325,8 +325,8 @@ export function createServer(): McpServer {
       title: "Get liabilities",
       description:
         "Payment terms for credit cards and loans: next due date and amount (minimum payment for cards), last payment, last statement balance, APRs, overdue flag, and for loans the rate, principal, payoff and maturity. Use for \"when is my card due\" or \"did I pay it\".",
-      inputSchema: getLiabilitiesSchema.shape,
-      outputSchema: liabilitiesOutput.shape,
+      inputSchema: getLiabilitiesSchema,
+      outputSchema: liabilitiesOutput,
       annotations: READ_ONLY,
     },
     (args) =>
@@ -342,8 +342,8 @@ export function createServer(): McpServer {
       title: "Connection status",
       description:
         "Health of each bank connection: ok, or an error such as ITEM_LOGIN_REQUIRED (the user must re-link that bank), plus when each product last refreshed successfully. Check this when other tools fail or return stale data.",
-      inputSchema: connectionStatusSchema.shape,
-      outputSchema: connectionStatusOutput.shape,
+      inputSchema: connectionStatusSchema,
+      outputSchema: connectionStatusOutput,
       annotations: READ_ONLY,
     },
     (args) =>
@@ -359,8 +359,8 @@ export function createServer(): McpServer {
       title: "Spending summary",
       description:
         'Group expenses by merchant or category with totals. Shows where money is being spent. Use groupBy "merchant" for vendor breakdown, "category" for category breakdown.',
-      inputSchema: spendingSummarySchema.shape,
-      outputSchema: spendingSummaryOutput.shape,
+      inputSchema: spendingSummarySchema,
+      outputSchema: spendingSummaryOutput,
       annotations: READ_ONLY,
     },
     (args) =>

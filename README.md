@@ -466,7 +466,7 @@ bank-mcp handles sensitive financial credentials. Its security posture is built 
 
 - **Read-only by design** — the `BankProvider` interface exposes only read methods (`listAccounts`, `listTransactions`, `getBalance`). There are no write methods — no transfers, no account modifications, no payment initiation. This is enforced at the type level, not by convention.
 - **No network listener** — bank-mcp runs as a stdio process (stdin/stdout), not an HTTP server. There is no open port, no attack surface from the network.
-- **Minimal dependencies** — only 4 runtime dependencies (`@modelcontextprotocol/sdk`, `@clack/prompts`, `jsonwebtoken`, `zod`). Fewer dependencies means fewer supply chain risks.
+- **Minimal dependencies** — only 4 runtime dependencies (`@modelcontextprotocol/server`, `@clack/prompts`, `jsonwebtoken`, `zod`). Fewer dependencies means fewer supply chain risks.
 - **Open source** — every line is auditable. No obfuscated code, no compiled blobs, no telemetry.
 
 ### Credential Storage
